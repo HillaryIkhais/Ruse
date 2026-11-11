@@ -8,14 +8,17 @@ a frozen proposal, verify, and revoke — all mediated by the lease.
 
 from __future__ import annotations
 
+import os
 import sys
 
-if __package__ in (None, ""):
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
-import schemas  # noqa: E402
-import tools  # noqa: E402
+# Relative imports so Hermes's own top-level ``schemas``/``tools`` modules
+# (already cached in sys.modules) can't shadow the plugin's own modules.
+from . import schemas  # noqa: E402
+from . import tools  # noqa: E402
 
 TOOLSET = "ruse"
 
@@ -24,10 +27,9 @@ def register(ctx) -> None:
     """Wire schemas to handlers."""
     settings = {}
     try:
-        settings = ctx.get_config() or {}
+        data_dir = ctx.get_config("data_dir")
     except Exception:
-        settings = {}
-    data_dir = settings.get("data_dir") if isinstance(settings, dict) else None
+        data_dir = None
     if data_dir:
         tools._STATE["data_dir"] = data_dir
 

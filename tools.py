@@ -19,10 +19,64 @@ import broker as broker_mod  # noqa: E402
 _STATE: Dict[str, Any] = {"broker": None, "data_dir": None}
 
 
+def _config_data_dir() -> str | None:
+    """Read plugins.entries.ruse.settings.data_dir from the Hermes config file directly.
+
+    ctx.get_config() isn't available in tool handlers (only args/kwargs), and the
+    plugin host child process may not inherit RUSE_DATA_DIR. Reading the config
+    file directly is the reliable fallback. Minimal indentation-based parse for
+    the specific section we need (no PyYAML dependency)."""
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    cfg_path = os.path.join(home, "config.yaml")
+    if not os.path.exists(cfg_path):
+        return None
+    try:
+        with open(cfg_path, encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except Exception:
+        return None
+    # Walk the tree: plugins -> entries -> ruse -> settings -> data_dir
+    section = None  # current section name at each indent level
+    indent_stack: list[tuple[int, str]] = []  # (indent, section)
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if ":" not in stripped:
+            continue
+        key, _, val = stripped.partition(":")
+        key = key.strip()
+        val = val.strip()
+        # Pop stack to current indent
+        while indent_stack and indent_stack[-1][0] >= indent:
+            indent_stack.pop()
+        if val == "":
+            # new section
+            indent_stack.append((indent, key))
+            if indent_stack == [(0, "plugins"), (2, "entries"), (4, "ruse"), (6, "settings")]:
+                section = "settings"
+            else:
+                section = None
+        else:
+            # leaf value
+            path = [s for _, s in indent_stack] + [key]
+            if path == ["plugins", "entries", "ruse", "settings", "data_dir"]:
+                return val.strip('"').strip("'")
+    return None
+
+
 def data_dir() -> str:
     d = _STATE["data_dir"]
-    return d or os.environ.get("RUSE_DATA_DIR",
-                               os.path.expanduser("~/.hermes/plugin-data/ruse"))
+    if d:
+        return d
+    env_d = os.environ.get("RUSE_DATA_DIR")
+    if env_d:
+        return env_d
+    cfg_d = _config_data_dir()
+    if cfg_d:
+        return cfg_d
+    return os.path.expanduser("~/.hermes/plugin-data/ruse")
 
 
 def leases_dir() -> str:
@@ -40,6 +94,9 @@ def _json(payload: Any) -> str:
 
 
 def ruse_connect(args: dict, **kwargs) -> str:
+    explicit_dd = args.get("data_dir")
+    if explicit_dd:
+        _STATE["data_dir"] = explicit_dd
     name = args.get("lease") or ""
     lease_path = args.get("lease_path") or os.path.join(leases_dir(), f"{name}.json")
     creds = args.get("credentials_path") or os.path.join(data_dir(), "credentials.json")
@@ -75,8 +132,8 @@ def ruse_fill(args: dict, **kwargs) -> str:
         page.fill(selector, value)
         return {"ok": True, "filled": selector}
     try:
-        return _json(_broker().call(_fill, args.get("selector", ""),
-                                    args.get("value", ""))[1])
+        return _json(_broker()._invoke(_fill, args.get("selector", ""),
+                                       args.get("value", "")))
     except Exception as exc:  # noqa: BLE001
         return _json({"ok": False, "error": str(exc)})
 
@@ -108,7 +165,7 @@ def ruse_verify(args: dict, **kwargs) -> str:
         r = page.request.get(origin + path)
         return {"url": page.url, "status_code": r.status, "body": r.text()[:400]}
     try:
-        return _json(_broker().call(_verify)[1])
+        return _json(_broker()._invoke(_verify))
     except Exception as exc:  # noqa: BLE001
         return _json({"ok": False, "error": str(exc)})
 

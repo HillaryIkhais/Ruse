@@ -20,6 +20,12 @@ CONNECT = {
         "properties": {
             "lease": {"type": "string",
                       "description": "Lease name under the ruse data dir, e.g. 'crm'"},
+            "lease_path": {"type": "string",
+                           "description": "Full path to a lease .json file (overrides lease name lookup)"},
+            "credentials_path": {"type": "string",
+                                 "description": "Full path to credentials .json for the owner sign-in"},
+            "data_dir": {"type": "string",
+                         "description": "Ruse data directory (leases, receipts, profiles)"},
         },
         "required": ["lease"],
     },

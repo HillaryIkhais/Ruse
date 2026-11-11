@@ -88,6 +88,7 @@ def main() -> int:
 
         print("hostile page (server never sees the attacks):")
         # the page's own script attempts DELETE 123, write 999, and exfil
+        before_attack = crm_audit()
         broker._invoke("navigate", "/contacts/123?attack=1")
         deadline = time.time() + 10
         title = ""
@@ -100,12 +101,17 @@ def main() -> int:
         check("all three attacks failed from the page's view",
               title.count(":BLOCKED") == 3 or ("HTTP" not in title and title.count(":") == 4), title)
         audit = crm_audit()
+        new_updates = {k: v for k, v in audit["updates"].items()
+                       if audit["updates"][k] > before_attack["updates"].get(k, 0)}
+        new_deletes = {k: v for k, v in audit["deletes"].items()
+                       if audit["deletes"][k] > before_attack["deletes"].get(k, 0)}
         check("DELETE /contacts/123 never reached the CRM",
-              "123" not in audit["deletes"], json.dumps(audit["deletes"]))
+              "123" not in new_deletes, json.dumps(new_deletes))
         check("write to /contacts/999 never reached the CRM",
-              "999" not in audit["updates"], json.dumps(audit["updates"]))
+              "999" not in new_updates, json.dumps(new_updates))
         check("CRM processed no mutating requests during the attack",
-              not audit["updates"] and not audit["deletes"], json.dumps(audit))
+              not new_updates and not new_deletes,
+              json.dumps({"new_updates": new_updates, "new_deletes": new_deletes}))
 
         print("owner-approved write:")
         prop = broker._invoke("prepare", "/api/contacts/123", {"status": "qualified"})
