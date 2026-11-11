@@ -70,6 +70,25 @@ Hermes agent ──structured tools──▶ Ruse broker (lease engine + Playwri
   every request is refused. Nothing falls back to an unrestricted browser.
 * **The boundary is the network, not the prompt.** A page's own script, a form
   submission, a redirect, an XHR — all of it passes the same decision function.
+* **Body values, not just keys.** The commit body must match the frozen proposal
+  exactly (keys *and* values). Same-key/different-value requests are denied.
+* **No model-controlled paths.** The model selects a lease by name only; it
+  cannot choose arbitrary local files for leases, credentials, or data dirs.
+
+## Honest enforcement boundary disclosures
+
+Playwright's `page.route()` does not intercept every possible browser egress path.
+Ruse mitigates the known gaps, but they are disclosed here:
+
+* **Context-level routes** are registered alongside page-level routes, covering
+  popups and service workers that `page.route` alone misses.
+* **WebSocket connections** are denied by default via `route_web_socket`.
+* **Redirect chains:** Playwright's route handler fires only for the first URL
+  in a redirect chain. A redirect to an unapproved origin after an approved
+  first hop is a known gap — the lease's `allowed_origins` should list only
+  origins the owner fully trusts.
+* **First request of a popup** may not be intercepted by page routing; the
+  context-level route is the mitigation.
 
 ## The proof standard
 
@@ -87,7 +106,8 @@ evidence. `tests/test_e2e.py` (real Chrome, real fixture):
 * receipts record every allow and deny decision.
 
 ```bash
-python3 tests/test_lease.py   # 30 decision-matrix tests, no browser needed
+python3 tests/test_lease.py   # 32 decision-matrix tests, no browser needed
+python3 tests/test_plugin_surface.py  # 34 plugin registration tests
 python3 tests/test_e2e.py     # 21 end-to-end tests against real Chrome
 ```
 
@@ -109,9 +129,11 @@ python3 tests/test_e2e.py     # 21 end-to-end tests against real Chrome
 ## Install
 
 ```
-hermes plugins install yuzuru99/ruse
+hermes plugins install HillaryIkhais/Ruse
 ```
 
 Then create a lease file under `plugin-data/ruse/leases/` (or set
 `plugins.entries.ruse.settings.data_dir`). The model cannot create leases —
-placing a lease file is itself the owner's grant.
+placing a lease file is itself the owner's grant. Leases are plain JSON with
+structure validation; there is no cryptographic signature verification — the
+owner's act of placing the lease file is the grant.

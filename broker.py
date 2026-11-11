@@ -130,6 +130,26 @@ class _State:
         else:
             route.abort()
 
+    def _route_ws(self, ws) -> None:
+        """WebSocket connections are denied by default — the lease only
+        grants specific HTTP origins/paths, never raw WebSocket access."""
+        url = ws.url
+        self.receipt({"event": "deny", "method": "WEBSOCKET", "url": url,
+                      "rule": "lease.websocket", "reason": "WebSocket connections are not covered by the lease"})
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+    def evaluate(self, script: str) -> Any:
+        """Run JavaScript in the page context (used by tests to simulate
+        hostile page scripts). The resulting network requests still pass
+        through _route enforcement."""
+        page = self.st["page"]
+        if page is None:
+            raise LeaseError("not connected")
+        return page.evaluate(script)
+
     # -- lifecycle -----------------------------------------------------------
     def connect(self, lease_path: str, credentials_path: str = "") -> Dict[str, Any]:
         lease = load_lease(lease_path)
@@ -153,7 +173,20 @@ class _State:
             profile_dir, channel="chrome", headless=True,
             viewport={"width": 1280, "height": 800})
         page = self.st["ctx"].new_page()
+        # Page-level route interception (covers navigation, form submit,
+        # page fetch/XHR on this page).
         page.route("**/*", self._route)
+        # Context-level route interception (covers popups, service workers,
+        # and other contexts page.route alone misses).
+        self.st["ctx"].route("**/*", self._route)
+        # WebSocket interception: raw WebSocket connections must not bypass
+        # the lease. Deny all WebSocket connections by default.
+        try:
+            self.st["ctx"].route_web_socket("**/*", self._route_ws)
+        except Exception:
+            # Older Playwright without route_web_socket: WebSockets are
+            # not intercepted — documented limitation in README.
+            pass
         self.st["page"] = page
         self.st["enforce"] = False  # pairing: owner-supervised sign-in only
 

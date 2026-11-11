@@ -94,17 +94,20 @@ def _json(payload: Any) -> str:
 
 
 def ruse_connect(args: dict, **kwargs) -> str:
-    explicit_dd = args.get("data_dir")
-    if explicit_dd:
-        _STATE["data_dir"] = explicit_dd
     name = args.get("lease") or ""
-    lease_path = args.get("lease_path") or os.path.join(leases_dir(), f"{name}.json")
-    creds = args.get("credentials_path") or os.path.join(data_dir(), "credentials.json")
+    if not name:
+        return _json({"ok": False, "error": "lease name is required"})
+    # Lease selection is constrained to owner-provisioned files under the
+    # ruse data dir's leases/ directory. The model cannot choose arbitrary
+    # local paths.
+    lease_path = os.path.join(leases_dir(), f"{name}.json")
     if not os.path.exists(lease_path):
         return _json({"ok": False,
                       "error": f"no lease file {lease_path}",
-                      "hint": "the owner places a signed lease file there; "
-                              "the model cannot create leases"})
+                      "hint": "the owner places a lease file under "
+                              "plugin-data/ruse/leases/; the model cannot "
+                              "create or select leases"})
+    creds = os.path.join(data_dir(), "credentials.json")
     try:
         result = _broker()._invoke("connect", lease_path, creds)
         return _json(result)

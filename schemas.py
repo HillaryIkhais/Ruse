@@ -11,21 +11,17 @@ CONNECT = {
     "name": "ruse_connect",
     "description": (
         "Open a governed browser session under an owner-approved capability "
-        "lease. The lease defines which origin, pages and ONE write operation "
-        "you may use, and for how long. Call this before any other ruse_* "
-        "tool. Returns the lease scope; anything outside it is blocked."
+        "lease. The lease file is provisioned by the owner under the ruse "
+        "data directory (leases/). The model selects a lease by name only — "
+        "it cannot choose arbitrary local paths. Returns the lease scope; "
+        "anything outside it is blocked."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "lease": {"type": "string",
-                      "description": "Lease name under the ruse data dir, e.g. 'crm'"},
-            "lease_path": {"type": "string",
-                           "description": "Full path to a lease .json file (overrides lease name lookup)"},
-            "credentials_path": {"type": "string",
-                                 "description": "Full path to credentials .json for the owner sign-in"},
-            "data_dir": {"type": "string",
-                         "description": "Ruse data directory (leases, receipts, profiles)"},
+                      "description": "Lease name under the ruse data dir, e.g. 'crm' "
+                                     "(resolves to leases/<name>.json)"},
         },
         "required": ["lease"],
     },

@@ -118,6 +118,13 @@ def test_tampered_commit():
     check("commit with extra key denied", not d.allowed and d.rule == "commit.body_mismatch", d.reason)
     d = s.decide("POST", f"{ORIGIN}/api/contacts/123", {})
     check("commit with missing key denied", not d.allowed, d.reason)
+    # CRITICAL: same key, different value must be denied
+    d = s.decide("POST", f"{ORIGIN}/api/contacts/123", {"status": "deleted"})
+    check("commit with same key, different value denied",
+          not d.allowed and d.rule == "commit.body_mismatch", d.reason)
+    # CRITICAL: None body when proposal has body must be denied
+    d = s.decide("POST", f"{ORIGIN}/api/contacts/123", None)
+    check("commit with None body denied", not d.allowed and d.rule == "commit.body_missing", d.reason)
     d = s.decide("POST", f"{ORIGIN}/contacts/999", {"status": "qualified"})
     check("commit to wrong path denied", not d.allowed and d.rule == "commit.mismatch", d.reason)
     d = s.decide("PUT", f"{ORIGIN}/contacts/123", {"status": "qualified"})
