@@ -1,0 +1,33 @@
+name: ruse
+version: 2.0.0
+manifest_version: 2
+description: >-
+  Bounded browser authority for Hermes. Ruse grants the agent a temporary,
+  owner-approved capability lease over a dedicated authenticated browser
+  profile: one origin, specific pages, one frozen write operation, commit
+  budget, expiry, and full enforcement receipts. Every outbound request —
+  navigation, form submit, page fetch/XHR — is checked at the browser
+  network boundary before it reaches the application; denied requests never
+  arrive. Not a sandbox: a compromised owner or a co-enabled unrestricted
+  browser toolset is an unsafe deployment and documented as such.
+provides_tools:
+  - ruse_connect
+  - ruse_inspect
+  - ruse_navigate
+  - ruse_fill
+  - ruse_prepare
+  - ruse_commit
+  - ruse_verify
+  - ruse_revoke
+  - ruse_status
+  - ruse_receipts
+python_dependencies:
+  - "playwright>=1.40,<2"
+license: MIT
+homepage: https://github.com/yuzuru99/ruse
+tags: [security, browser, governance]
+config_schema:
+  data_dir:
+    type: str
+    default: ""
+    description: "Override the Ruse data directory (leases, receipts, profiles)"

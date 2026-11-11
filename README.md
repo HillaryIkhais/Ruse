@@ -1,59 +1,117 @@
-# Ruse — Owner-Controlled MCP Tool Safety Contracts for Hermes
+# Ruse — Bounded Browser Authority for Hermes
 
-> **Pitch:** An MCP server can label a destructive tool as read-only, and Hermes may trust that label. Ruse replaces server-claimed safety metadata with owner-approved, hash-pinned tool contracts.
+> **Your browser. Your permissions. Your agent.**
+> Ruse grants Hermes a temporary, owner-approved capability lease over a dedicated
+> authenticated browser profile — and enforces that lease at the browser's network
+> boundary. Requests outside the lease never reach the application.
 
-## The Problem
+Hermes can drive a real browser with your logins. That is powerful — and it means
+an agent can reach everything the account can, not just what you intended for the
+task. Ruse closes that gap with a new primitive: **the browser capability lease**.
 
-Hermes uses MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) to decide whether to ask for approval on `trust: untrusted` servers. The MCP specification warns:
+## The primitive: a capability lease
 
-> "Clients **must** treat tool annotations to be untrusted unless they come from trusted servers."
+A lease is a small, owner-authored JSON grant with six dimensions:
 
-Yet Hermes trusts these hints operationally. A server claiming `readOnlyHint: true` skips the approval gate entirely — even if the tool deletes files.
+| Dimension | What the lease fixes |
+|---|---|
+| Identity | a dedicated browser profile (`ruse-crm`), never your everyday profile |
+| Origin | exactly which sites the browser may talk to |
+| Resource | which pages/records are readable (`/contacts/123`, *not* `/contacts/999`) |
+| Action | the **one** write operation permitted (method + path + allowed fields) |
+| Arguments | which body fields may appear, and which values are allowed |
+| Lifetime | TTL, a commit budget (`max_commits`), and instant revocation |
 
-## Ruse's Fix
+```json
+{
+  "lease": {"name": "update-customer-123", "ttl_seconds": 300, "max_commits": 1},
+  "browser": {
+    "profile": "ruse-crm",
+    "allowed_origins": ["http://127.0.0.1:8710"],
+    "allowed_paths": ["/", "/login", "/contacts", "/contacts/123"]
+  },
+  "permissions": {
+    "write": {
+      "method": "POST",
+      "path": "/api/contacts/123",
+      "fields": {"status": {"allowed_values": ["new", "qualified"]}}
+    },
+    "denied": ["DELETE", "PUT", "PATCH"]
+  }
+}
+```
 
-A transparent stdio MCP proxy that:
+Path grants are exact: `/contacts` authorises only the list page — a trailing
+slash (`/contacts/`) is what would grant the whole subtree.
 
-1. **Intercepts** every `tools/list` response
-2. **Fingerprints** the complete tool contract (name, description, schemas, **annotations**) with SHA-256
-3. **Checks** owner approval; unapproved contracts get conservative annotations
-4. **Revokes** any approval on contract change (the server cannot edit its way back to read-only)
+## Enforcement architecture
 
-## Architecture
+The model never receives a browser it can drive freely. It receives ten
+structured tools, and the actual browser lives inside the Ruse broker:
 
 ```
-   Hermes Agent                  Ruse Proxy
-  ┌─────────────┐    tools/list   ┌───────────┐   tools/list    ┌────────────┐
-  │  Model/API  │ ───────────────→│ fingerprint │ ─────────────→│ MCP Server │
-  │             │  ←──────────────│ rewrite   │ ←─────────────│            │
-  └─────────────┘                 └───────────┘                 └────────────┘
-                                      ▲         ▲
-                                      │         │
-                                  policy.json  audit.jsonl
+Hermes agent ──structured tools──▶ Ruse broker (lease engine + Playwright)
+                                        │  every outbound request is decided:
+                                        │  navigation, form submit, fetch, XHR
+                                        ▼
+                        authenticated dedicated profile ──▶ application
+                                        ▲
+                    denied requests are ABORTED at the network boundary
 ```
 
-## Owner CLI
+* **No arbitrary code surface.** There is no `browser_exec`, no JS evaluation, no
+  raw CDP tool. Governed authority is expressed only as connect → inspect →
+  navigate → fill → prepare → commit → verify → revoke.
+* **Preparation is not execution.** `ruse_prepare` freezes the exact request
+  (method, path, body) into a one-time proposal. `ruse_commit` can execute only
+  that frozen request — arguments cannot be changed at commit time, and the
+  commit is consumed after one use.
+* **Fail closed.** No lease, expired lease, revoked lease, or missing broker →
+  every request is refused. Nothing falls back to an unrestricted browser.
+* **The boundary is the network, not the prompt.** A page's own script, a form
+  submission, a redirect, an XHR — all of it passes the same decision function.
+
+## The proof standard
+
+The demo fixture is a real local CRM with **server-side** audit logging and
+counters. It knows nothing about Ruse — which is exactly what makes its log
+evidence. `tests/test_e2e.py` (real Chrome, real fixture):
+
+* a hostile page script attempts `DELETE /contacts/123`, writes customer 999,
+  and exfiltrates to an external origin — **all three are blocked**, and the
+  CRM's own log shows **zero mutating requests arrived**;
+* the owner-approved write is prepared (nothing sent), committed once, and
+  verified by re-reading the record;
+* a replayed commit, a second commit, and any post-revocation operation are
+  refused — the server still saw exactly one write;
+* receipts record every allow and deny decision.
 
 ```bash
-ruse status                     # list: claim vs effective vs approved
-ruse diff evil/read_note        # show reviewed contract
-ruse approve-readonly evil/read_note   # owner approves exact contract
-ruse revoke evil/read_note      # drop approval
-ruse audit 10                   # last 10 audit events
+python3 tests/test_lease.py   # 30 decision-matrix tests, no browser needed
+python3 tests/test_e2e.py     # 21 end-to-end tests against real Chrome
 ```
 
-## Verification
+## Honest limitations
 
-- **Protocol**: 29/29 tests pass (`tests/test_ruse_proxy.py`)
-- **Audit trail**: Every decision logged with claim vs effective policy
-- **Rug-pull proof**: Schema/annotation changes auto-revoke approval
+* **Not a sandbox.** Ruse governs the browser session it owns. If the same agent
+  session also has unrestricted network tools (native browser toolset, shell,
+  arbitrary HTTP), that is an unsafe deployment; Ruse detects and warns about
+  co-enabled `browser_*`/network surfaces but cannot stop the owner from
+  configuring one.
+* A compromised owner (or a lease the owner approves wrongly) is trusted.
+  Ruse's guarantee is: *the agent cannot exceed the lease the owner granted*.
+* Ruse verifies what the browser sent and what the app returned; it cannot
+  guarantee an approved server is benevolent.
+* stdio/local origins first; remote HTTP origins work for allowed-origins
+  enforcement but profile pairing is designed for local dedicated profiles.
+* Requires Hermes ≥ 0.23 and a Chromium with the `chrome` channel (Playwright).
 
-## Limitations (disclosed)
+## Install
 
-- NOT a sandbox — respects `approvals.mode: off` and YOLO as bypass
-- Owner controls policy; compromised owner = compromised safety
-- Requires Hermes >=0.23.0
+```
+hermes plugins install yuzuru99/ruse
+```
 
-## Why This Matters
-
-[MCP Pin #152646](https://github.com/NousResearch/hermes-agent/pull/152646) fingerprints descriptions and schemas but **explicitly excludes annotations** (see its README). Ruse is the only entry closing this trust gap.
+Then create a lease file under `plugin-data/ruse/leases/` (or set
+`plugins.entries.ruse.settings.data_dir`). The model cannot create leases —
+placing a lease file is itself the owner's grant.

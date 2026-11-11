@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "lease": {
+    "name": "update-customer-123",
+    "ttl_seconds": 300,
+    "max_commits": 1
+  },
+  "browser": {
+    "profile": "ruse-crm",
+    "allowed_origins": ["http://127.0.0.1:8710"],
+    "allowed_paths": ["/", "/login", "/contacts", "/contacts/123"],
+    "_note": "exact grants only: /contacts does NOT cover /contacts/999; a trailing slash would grant a subtree"
+  },
+    "permissions": {
+    "write": {
+      "method": "POST",
+      "path": "/api/contacts/123",
+      "fields": {
+        "status": {
+          "allowed_values": ["new", "qualified"],
+          "note": "approved transition: new -> qualified only"
+        }
+      }
+    },
+    "denied": ["DELETE", "PUT", "PATCH"]
+  }
+}
