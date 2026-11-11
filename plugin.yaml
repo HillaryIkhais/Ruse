@@ -25,7 +25,7 @@ provides_tools:
 python_dependencies:
   - "playwright>=1.40,<2"
 license: MIT
-homepage: https://github.com/yuzuru99/ruse
+homepage: https://github.com/HillaryIkhais/ruse
 tags: [security, browser, governance]
 config_schema:
   data_dir:
