@@ -1,6 +1,7 @@
 name: ruse
 version: 2.0.0
 manifest_version: 2
+requires_hermes: ">=0.23.0"
 description: >-
   Bounded browser authority for Hermes. Ruse grants the agent a temporary,
   owner-approved capability lease over a dedicated authenticated browser
