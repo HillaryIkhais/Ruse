@@ -151,7 +151,14 @@ class _State:
         return page.evaluate(script)
 
     # -- lifecycle -----------------------------------------------------------
-    def connect(self, lease_path: str, credentials_path: str = "") -> Dict[str, Any]:
+    def connect(self, lease_path: str, password: str = "") -> Dict[str, Any]:
+        """Open the governed browser under an owner-provisioned lease.
+
+        ``password`` is resolved by the caller from Hermes' profile-scoped
+        secret store (agent.secret_scope.get_secret). No plaintext credential
+        file is read here. Login selectors and the username come from the
+        owner-authored lease, never from model input.
+        """
         lease = load_lease(lease_path)
         session = LeaseSession(lease)
         self.st["session"] = session
@@ -190,15 +197,21 @@ class _State:
         self.st["page"] = page
         self.st["enforce"] = False  # pairing: owner-supervised sign-in only
 
-        # owner sign-in through the dedicated profile (credentials never in lease)
-        if credentials_path and os.path.exists(credentials_path):
-            with open(credentials_path, encoding="utf-8") as fh:
-                creds = json.load(fh)
-            page.goto(origin + "/", wait_until="load")
-            page.fill("input[name=user]", creds["user"])
-            page.fill("input[name=pass]", creds["pass"])
-            page.click("button")
+        # Owner sign-in through the dedicated persistent profile. The password
+        # is supplied from the secret scope by the caller; selectors and the
+        # username are owner-authored in the lease. With no secret configured
+        # auto-login is skipped and the owner signs in once in the profile.
+        login = lease["browser"].get("login") or {}
+        login_mode = "owner-profile"
+        if password and login:
+            page.goto(origin + login.get("path", "/"), wait_until="load")
+            user = login.get("user") or ""
+            if user:
+                page.fill(login.get("user_selector", "input[name=user]"), user)
+            page.fill(login.get("pass_selector", "input[name=pass]"), password)
+            page.click(login.get("submit_selector", "button"))
             page.wait_for_load_state("load")
+            login_mode = "secret-scope"
         self.st["enforce"] = True
         self.receipt({"event": "lease_start", "lease": lease["lease"].get("name"),
                       "origins": lease["browser"]["allowed_origins"],
@@ -207,7 +220,8 @@ class _State:
         return {"ok": True, "lease": lease["lease"].get("name"),
                 "origins": lease["browser"]["allowed_origins"],
                 "expires_at": session.started + session.ttl,
-                "commits_left": session.commits_left}
+                "commits_left": session.commits_left,
+                "login": login_mode}
 
     def navigate(self, path: str) -> Dict[str, Any]:
         page, session = self.st["page"], self.st["session"]
@@ -224,9 +238,11 @@ class _State:
         page = self.st["page"]
         if page is None:
             raise LeaseError("not connected")
+        # Password fields are never returned to the model — only their presence.
         fields = page.eval_on_selector_all(
             "input,textarea,select",
-            "els => els.map(e => ({tag: e.tagName.toLowerCase(), name: e.name, type: e.type, value: e.value}))")
+            "els => els.map(e => ({tag: e.tagName.toLowerCase(), name: e.name, "
+            "type: e.type, value: e.type === 'password' ? '' : e.value}))")
         headings = page.eval_on_selector_all(
             "h1,p", "els => els.slice(0,12).map(e => e.innerText.trim()).filter(Boolean)")
         return {"url": page.url, "title": page.title(), "headings": headings, "fields": fields}

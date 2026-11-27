@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from typing import Any, Dict
 
@@ -76,11 +77,55 @@ def data_dir() -> str:
     cfg_d = _config_data_dir()
     if cfg_d:
         return cfg_d
-    return os.path.expanduser("~/.hermes/plugin-data/ruse")
+    # Derive from the active Hermes profile, not a hardcoded ~/.hermes path:
+    # every profile gets its own lease, receipt and browser-profile store.
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    return os.path.join(home, "plugin-data", "ruse")
 
 
 def leases_dir() -> str:
     return os.path.join(data_dir(), "leases")
+
+
+# A lease is selected by a plain owner-provisioned name only. The regex makes
+# "../x" and "/abs/x" impossible; the realpath containment check below is
+# defence in depth (symlinks, future schema changes).
+_LEASE_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_CRED_SECRET_ENV = "RUSE_CRM_PASSWORD"
+
+
+def resolve_lease_path(name: Any) -> tuple[str | None, str | None]:
+    """Resolve a model-supplied lease name to a contained lease path.
+
+    Returns (path, None) on success or (None, error) on rejection. No model
+    input is ever joined into a path without first passing the strict name
+    check and the realpath containment check.
+    """
+    if not isinstance(name, str) or not _LEASE_NAME_RE.fullmatch(name):
+        return None, ("invalid lease name — use 1-64 characters from "
+                      "[A-Za-z0-9_-] (e.g. 'crm'); paths are not accepted")
+    base = os.path.realpath(leases_dir())
+    candidate = os.path.realpath(os.path.join(base, f"{name}.json"))
+    try:
+        if os.path.commonpath([base, candidate]) != base:
+            return None, "lease path escapes the leases directory"
+    except ValueError:
+        return None, "lease path escapes the leases directory"
+    return candidate, None
+
+
+def resolve_login_password() -> str:
+    """Resolve the CRM password from Hermes' profile-scoped secret store.
+
+    The password is never read from a plaintext file inside the plugin data
+    dir. If no secret is configured, auto-login is skipped (fail closed) and
+    the owner can sign in once in the persistent profile instead.
+    """
+    try:
+        from agent.secret_scope import get_secret  # type: ignore
+        return get_secret(_CRED_SECRET_ENV, "") or ""
+    except Exception:  # noqa: BLE001 — no secret scope in standalone tests
+        return ""
 
 
 def _broker():
@@ -95,21 +140,21 @@ def _json(payload: Any) -> str:
 
 def ruse_connect(args: dict, **kwargs) -> str:
     name = args.get("lease") or ""
-    if not name:
-        return _json({"ok": False, "error": "lease name is required"})
-    # Lease selection is constrained to owner-provisioned files under the
-    # ruse data dir's leases/ directory. The model cannot choose arbitrary
-    # local paths.
-    lease_path = os.path.join(leases_dir(), f"{name}.json")
-    if not os.path.exists(lease_path):
+    lease_path, err = resolve_lease_path(name)
+    if err:
+        return _json({"ok": False, "error": err})
+    assert lease_path is not None
+    if not os.path.isfile(lease_path):
         return _json({"ok": False,
-                      "error": f"no lease file {lease_path}",
+                      "error": f"no lease named {name!r}",
                       "hint": "the owner places a lease file under "
                               "plugin-data/ruse/leases/; the model cannot "
                               "create or select leases"})
-    creds = os.path.join(data_dir(), "credentials.json")
+    # Password comes from the profile-scoped Hermes secret store, never from
+    # a plaintext file the model could read or write.
+    password = resolve_login_password()
     try:
-        result = _broker()._invoke("connect", lease_path, creds)
+        result = _broker()._invoke("connect", lease_path, password)
         return _json(result)
     except Exception as exc:  # noqa: BLE001
         return _json({"ok": False, "error": str(exc)})

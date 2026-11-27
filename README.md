@@ -62,6 +62,14 @@ Hermes agent ──structured tools──▶ Ruse broker (lease engine + Playwri
 * **No arbitrary code surface.** There is no `browser_exec`, no JS evaluation, no
   raw CDP tool. Governed authority is expressed only as connect → inspect →
   navigate → fill → prepare → commit → verify → revoke.
+* **Credential-free lease selection.** `ruse_connect` accepts only a plain lease
+  name (`[A-Za-z0-9_-]{1,64}`) and verifies with `realpath` that the resolved
+  file stays inside the leases directory. `../x` and absolute paths are refused.
+* **Secrets via Hermes, not plaintext files.** The login password is read from
+  `agent.secret_scope.get_secret("RUSE_CRM_PASSWORD")`; there is no
+  `credentials.json` in the plugin data dir. Login selectors and the username
+  are owner-authored in the lease's `browser.login` block. `ruse_inspect` blanks
+  password-field values before returning fields to the model.
 * **Preparation is not execution.** `ruse_prepare` freezes the exact request
   (method, path, body) into a one-time proposal. `ruse_commit` can execute only
   that frozen request — arguments cannot be changed at commit time, and the
@@ -107,17 +115,16 @@ evidence. `tests/test_e2e.py` (real Chrome, real fixture):
 
 ```bash
 python3 tests/test_lease.py   # 32 decision-matrix tests, no browser needed
-python3 tests/test_plugin_surface.py  # 34 plugin registration tests
-python3 tests/test_e2e.py     # 21 end-to-end tests against real Chrome
+python3 tests/test_plugin_surface.py  # 45 plugin registration + containment tests
+python3 tests/test_e2e.py     # 24 end-to-end tests against real Chrome
 ```
 
 ## Honest limitations
 
 * **Not a sandbox.** Ruse governs the browser session it owns. If the same agent
   session also has unrestricted network tools (native browser toolset, shell,
-  arbitrary HTTP), that is an unsafe deployment; Ruse detects and warns about
-  co-enabled `browser_*`/network surfaces but cannot stop the owner from
-  configuring one.
+  arbitrary HTTP), that is an unsafe deployment. Ruse does **not** detect or warn
+  about co-enabled tools — the owner must avoid enabling those alongside Ruse.
 * A compromised owner (or a lease the owner approves wrongly) is trusted.
   Ruse's guarantee is: *the agent cannot exceed the lease the owner granted*.
 * Ruse verifies what the browser sent and what the app returned; it cannot
@@ -132,8 +139,30 @@ python3 tests/test_e2e.py     # 21 end-to-end tests against real Chrome
 hermes plugins install HillaryIkhais/Ruse
 ```
 
-Then create a lease file under `plugin-data/ruse/leases/` (or set
-`plugins.entries.ruse.settings.data_dir`). The model cannot create leases —
-placing a lease file is itself the owner's grant. Leases are plain JSON with
-structure validation; there is no cryptographic signature verification — the
-owner's act of placing the lease file is the grant.
+Then create a lease file under `plugin-data/ruse/leases/` (the directory follows
+the active `HERMES_HOME` profile, or `plugins.entries.ruse.settings.data_dir`).
+The model cannot create leases — placing a lease file is itself the owner's
+grant. Leases are plain JSON with structure validation; there is no
+cryptographic signature verification — the owner's act of placing the lease
+file is the grant.
+
+For auto-login, set the `RUSE_CRM_PASSWORD` secret in the Hermes profile
+(Desktop Plugins settings, or the profile `.env`). Ruse resolves it through
+`agent.secret_scope.get_secret` — it never reads a plaintext credential file.
+If the secret is not set, auto-login is skipped and the owner signs in once in
+the dedicated persistent browser profile. The username and the login selectors
+are owner-configured under `browser.login` in the lease:
+
+```json
+"browser": {
+  "allowed_origins": ["http://127.0.0.1:8710"],
+  "allowed_paths": ["/", "/login", "/contacts/123"],
+  "login": {
+    "user": "owner",
+    "path": "/",
+    "user_selector": "input[name=user]",
+    "pass_selector": "input[name=pass]",
+    "submit_selector": "button"
+  }
+}
+```

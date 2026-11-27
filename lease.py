@@ -114,6 +114,18 @@ def validate_lease(lease: Dict[str, Any]) -> None:
         for o in b["allowed_origins"]:
             if "://" not in o:
                 raise LeaseError(f"allowed_origin is not scheme://host[:port]: {o}")
+        # Login is optional and owner-authored. Selectors are plain strings;
+        # the password itself never lives in the lease.
+        login = b.get("login")
+        if login is not None:
+            if not isinstance(login, dict):
+                raise LeaseError("browser.login must be an object")
+            for key in ("path", "user", "user_selector", "pass_selector", "submit_selector"):
+                if key in login and not isinstance(login[key], str):
+                    raise LeaseError(f"browser.login.{key} must be a string")
+            if "pass" in login:
+                raise LeaseError("browser.login.pass is forbidden — use the "
+                                 "RUSE_CRM_PASSWORD secret scope instead")
         w = lease["permissions"].get("write")
         if w is not None:
             if "method" not in w or "path" not in w:

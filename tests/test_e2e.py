@@ -86,20 +86,26 @@ def main() -> int:
             print("fixture failed to start")
             return 1
 
-        creds = tmp / "credentials.json"
-        creds.write_text(json.dumps({"user": "owner", "pass": "hunter2"}))
+        # Password is supplied from the secret scope (mocked here with the
+        # fixture's test password); no plaintext credential file is written.
         broker = Broker(str(data_dir))
 
         print("lifecycle:")
-        conn = broker._invoke("connect", str(ROOT / "leases" / "crm.json"), str(creds))
+        conn = broker._invoke("connect", str(ROOT / "leases" / "crm.json"), "hunter2")
         check("connect under lease", conn.get("ok") is True, str(conn))
         check("commit budget granted", conn.get("commits_left") == 1, str(conn))
+        check("login uses secret-scope password", conn.get("login") == "secret-scope", str(conn))
+        check("no plaintext credentials file written",
+              not list(data_dir.glob("credentials.json")), str(list(data_dir.iterdir())))
 
         print("governed reads:")
         nav = broker._invoke("navigate", "/contacts/123")
         check("navigate to allowed record", f"{ORIGIN}/contacts/123" == nav.get("url"), str(nav))
         info = broker._invoke("inspect")
         check("inspect sees the record", any("Customer 123" in h for h in info["headings"]), str(info))
+        pw_fields = [f for f in info["fields"] if f.get("type") == "password"]
+        check("inspect blanks password field values",
+              all(f.get("value") == "" for f in pw_fields), str(pw_fields))
         try:
             broker._invoke("navigate", "/contacts/999")
             check("navigate to forbidden record refused", False, "allowed /contacts/999")

@@ -9,7 +9,14 @@
     "profile": "ruse-crm",
     "allowed_origins": ["http://127.0.0.1:8710"],
     "allowed_paths": ["/", "/login", "/contacts", "/contacts/123"],
-    "_note": "exact grants only: /contacts does NOT cover /contacts/999; a trailing slash would grant a subtree"
+    "_note": "exact grants only: /contacts does NOT cover /contacts/999; a trailing slash would grant a subtree",
+    "login": {
+      "user": "owner",
+      "path": "/",
+      "user_selector": "input[name=user]",
+      "pass_selector": "input[name=pass]",
+      "submit_selector": "button"
+    }
   },
     "permissions": {
     "write": {

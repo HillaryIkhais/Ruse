@@ -32,7 +32,7 @@ broker = Broker(str(tmp / "data"))
 conn = broker._invoke(
     "connect",
     str(ROOT / "leases" / "crm.json"),
-    str(tmp / "credentials.json"),
+    "hunter2",  # stand-in for the secret-scope password
 )
 print("connect:", conn)
 

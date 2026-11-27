@@ -1,5 +1,5 @@
 name: ruse
-version: 2.0.0
+version: 2.0.1
 manifest_version: 2
 requires_hermes: ">=0.23.0"
 description: >-
@@ -32,3 +32,10 @@ config_schema:
     type: str
     default: ""
     description: "Override the Ruse data directory (leases, receipts, profiles)"
+  crm_password:
+    type: secret
+    env: RUSE_CRM_PASSWORD
+    description: >-
+      Password for owner-supervised auto-login into the leased CRM profile.
+      Stored in the profile .env / secret store, never in a plaintext file
+      inside the plugin data dir. Read via agent.secret_scope.get_secret.

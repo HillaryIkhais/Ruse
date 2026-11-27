@@ -86,6 +86,34 @@ def run() -> int:
               isinstance(parsed, dict) and ("ok" in parsed or "error" in parsed
                                             or "active" in parsed or "receipts" in parsed),
               result[:100])
+    print("lease name containment:")
+    p, err = tools.resolve_lease_path("crm")
+    check("plain lease name resolves", p is not None and err is None, str((p, err)))
+    for bad in ("", "../x", "/abs/x", "..", "a/b", "../../etc/passwd", "a" * 65):
+        p, err = tools.resolve_lease_path(bad)
+        check(f"reject lease name {bad[:20]!r}", p is None and err is not None,
+              str((p, err)))
+    for bad in ("../x", "/abs/x"):
+        res = json.loads(tools.ruse_connect({"lease": bad}))
+        check(f"ruse_connect rejects {bad!r} before opening broker",
+              res.get("ok") is False, str(res))
+
+    print("profile-scoped data dir:")
+    saved_data = os.environ.pop("RUSE_DATA_DIR", None)
+    saved_home = os.environ.get("HERMES_HOME")
+    os.environ["HERMES_HOME"] = "/tmp/ruse-home-a"
+    tools._STATE["data_dir"] = None
+    check("data dir derives from HERMES_HOME",
+          tools.data_dir() == os.path.join("/tmp/ruse-home-a", "plugin-data", "ruse"),
+          tools.data_dir())
+    tools._STATE["data_dir"] = tmp
+    if saved_home is None:
+        os.environ.pop("HERMES_HOME", None)
+    else:
+        os.environ["HERMES_HOME"] = saved_home
+    if saved_data is not None:
+        os.environ["RUSE_DATA_DIR"] = saved_data
+
     tools.shutdown()
     print(f"\n{PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0
