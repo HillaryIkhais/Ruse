@@ -77,7 +77,8 @@ Hermes agent ──structured tools──▶ Ruse broker (lease engine + Playwri
 * **Fail closed.** No lease, expired lease, revoked lease, or missing broker →
   every request is refused. Nothing falls back to an unrestricted browser.
 * **The boundary is the network, not the prompt.** A page's own script, a form
-  submission, a redirect, an XHR — all of it passes the same decision function.
+  submission, and page fetch/XHR all pass the same decision function. Redirects
+  are only partly covered by Playwright — see the disclosure below.
 * **Body values, not just keys.** The commit body must match the frozen proposal
   exactly (keys *and* values). Same-key/different-value requests are denied.
 * **No model-controlled paths.** The model selects a lease by name only; it
